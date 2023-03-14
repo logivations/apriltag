@@ -88,6 +88,8 @@ int main(int argc, char *argv[])
         tf = tag36h11_create();
     } else if (!strcmp(famname, "tag25h9")) {
         tf = tag25h9_create();
+    } else if (!strcmp(famname, "tag25h8")) {
+        tf = tag25h8_create();
     } else if (!strcmp(famname, "tag16h5")) {
         tf = tag16h5_create();
     } else if (!strcmp(famname, "tagCircle21h7")) {
