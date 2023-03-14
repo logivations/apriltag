@@ -1,6 +1,8 @@
 #ifndef _TAG25H8
 #define _TAG25H8
 
+#include "apriltag.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -1,7 +1,7 @@
 #include <stdlib.h>
-#include "apriltag.h"
+#include "tag25h8.h"
 
-apriltag_family_t __attribute__((optimize("O0"))) *tag25h8_create()
+apriltag_family_t *tag25h8_create()
 {
    apriltag_family_t *tf = calloc(1, sizeof(apriltag_family_t));
    tf->name = strdup("tag25h8");
@@ -198,7 +198,6 @@ apriltag_family_t __attribute__((optimize("O0"))) *tag25h8_create()
 
 void tag25h8_destroy(apriltag_family_t *tf)
 {
-   free(tf->codes);
    free(tf->bit_x);
    free(tf->bit_y);
    free(tf->name);

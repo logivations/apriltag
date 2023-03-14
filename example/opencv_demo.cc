@@ -34,6 +34,7 @@ extern "C" {
 #include "apriltag.h"
 #include "tag36h11.h"
 #include "tag25h9.h"
+#include "tag25h8.h"
 #include "tag16h5.h"
 #include "tagCircle21h7.h"
 #include "tagCircle49h12.h"
@@ -196,6 +197,8 @@ int main(int argc, char *argv[])
         tag36h11_destroy(tf);
     } else if (!strcmp(famname, "tag25h9")) {
         tag25h9_destroy(tf);
+    }  else if (!strcmp(famname, "tag25h8")) {
+        tag25h8_destroy(tf);
     } else if (!strcmp(famname, "tag16h5")) {
         tag16h5_destroy(tf);
     } else if (!strcmp(famname, "tagCircle21h7")) {
