@@ -21,8 +21,13 @@ print('LINKER', end=';')
 print(conf.get('BLDSHARED', '').split()[0], end=';')
 
 print('LDFLAGS', end=';')
+bldlibrary = conf.get('BLDLIBRARY', '')
+
+if bldlibrary.startswith("-l"):
+    bldlibrary = conf.get('LIBRARY', '')
+
 # use BINLIBDEST instead, to get full library path -> support building on ubuntu 18 with separately installed python
-print(' '.join(conf.get('BLDSHARED', '').split()[1:]) + ' ' + conf.get('LIBDIR','') + '/' +  conf.get('BLDLIBRARY', '') + ' ' + conf.get('LDFLAGS', ''), end=';')
+print(' '.join(conf.get('BLDSHARED', '').split()[1:]) + ' ' + conf.get('LIBDIR','') + '/' +  bldlibrary + ' ' + conf.get('LDFLAGS', ''), end=';')
 
 print('EXT_SUFFIX', end=';')
 ext_suffix = '.so'
