@@ -28,6 +28,7 @@ either expressed or implied, of the Regents of The University of Michigan.
 // limitation: image size must be <32768 in width and height. This is
 // because we use a fixed-point 16 bit integer representation with one
 // fractional bit.
+#define _USE_MATH_DEFINES
 #include <math.h>
 #include <assert.h>
 #include <string.h>
@@ -61,10 +62,6 @@ struct uint64_zarray_entry
 
     struct uint64_zarray_entry *next;
 };
-
-#ifndef M_PI
-# define M_PI 3.141592653589793238462643383279502884196
-#endif
 
 struct pt
 {
@@ -269,8 +266,13 @@ void fit_line(struct line_fit_pt *lfps, int sz, int i0, int i1, double *lineparm
         }
 
         double length = sqrtf(M);
-        lineparm[2] = nx/length;
-        lineparm[3] = ny/length;
+        if (fabs(length) < 1e-12) {
+            lineparm[2] = lineparm[3] = 0;
+        }
+        else {
+            lineparm[2] = nx/length;
+            lineparm[3] = ny/length;
+        }
     }
 
     // sum of squared errors =
@@ -502,7 +504,7 @@ int quad_segment_maxima(apriltag_detector_t *td, zarray_t *cluster, struct line_
 }
 
 // returns 0 if the cluster looks bad.
-int quad_segment_agg(apriltag_detector_t *td, zarray_t *cluster, struct line_fit_pt *lfps, int indices[4])
+int quad_segment_agg(zarray_t *cluster, struct line_fit_pt *lfps, int indices[4])
 {
     int sz = zarray_size(cluster);
 
@@ -849,42 +851,7 @@ int fit_quad(
     // step for segmenting them into four lines.
     if (1) {
         ptsort((struct pt*) cluster->data, zarray_size(cluster));
-
-        // remove duplicate points. (A byproduct of our segmentation system.)
-        if (1) {
-            int outpos = 1;
-
-            struct pt *last;
-            zarray_get_volatile(cluster, 0, &last);
-
-            for (int i = 1; i < sz; i++) {
-
-                struct pt *p;
-                zarray_get_volatile(cluster, i, &p);
-
-                if (p->x != last->x || p->y != last->y) {
-
-                    if (i != outpos)  {
-                        struct pt *out;
-                        zarray_get_volatile(cluster, outpos, &out);
-                        memcpy(out, p, sizeof(struct pt));
-                    }
-
-                    outpos++;
-                }
-
-                last = p;
-            }
-
-            cluster->size = outpos;
-            sz = outpos;
-        }
-
     }
-
-    if (sz < 24)
-        return 0;
-
 
     struct line_fit_pt *lfps = compute_lfps(sz, cluster, im);
 
@@ -893,7 +860,7 @@ int fit_quad(
         if (!quad_segment_maxima(td, cluster, lfps, indices))
             goto finish;
     } else {
-        if (!quad_segment_agg(td, cluster, lfps, indices))
+        if (!quad_segment_agg(cluster, lfps, indices))
             goto finish;
     }
 
@@ -937,11 +904,11 @@ int fit_quad(
         double det = A00 * A11 - A10 * A01;
 
         // inverse.
-        double W00 = A11 / det, W01 = -A01 / det;
         if (fabs(det) < 0.001) {
             res = 0;
             goto finish;
         }
+        double W00 = A11 / det, W01 = -A01 / det;
 
         // solve
         double L0 = W00*B0 + W01*B1;
@@ -1014,7 +981,7 @@ int fit_quad(
 
 #define DO_UNIONFIND2(dx, dy) if (im->buf[(y + dy)*s + x + dx] == v) unionfind_connect(uf, y*w + x, (y + dy)*w + x + dx);
 
-static void do_unionfind_first_line(unionfind_t *uf, image_u8_t *im, int h, int w, int s)
+static void do_unionfind_first_line(unionfind_t *uf, image_u8_t *im, int w, int s)
 {
     int y = 0;
     uint8_t v;
@@ -1029,7 +996,7 @@ static void do_unionfind_first_line(unionfind_t *uf, image_u8_t *im, int h, int 
     }
 }
 
-static void do_unionfind_line2(unionfind_t *uf, image_u8_t *im, int h, int w, int s, int y)
+static void do_unionfind_line2(unionfind_t *uf, image_u8_t *im, int w, int s, int y)
 {
     assert(y > 0);
 
@@ -1075,7 +1042,7 @@ static void do_unionfind_task2(void *p)
     struct unionfind_task *task = (struct unionfind_task*) p;
 
     for (int y = task->y0; y < task->y1; y++) {
-        do_unionfind_line2(task->uf, task->im, task->h, task->w, task->s, y);
+        do_unionfind_line2(task->uf, task->im, task->w, task->s, y);
     }
 }
 
@@ -1099,10 +1066,10 @@ static void do_quad_task(void *p)
         // a cluster should contain only boundary points around the
         // tag. it cannot be bigger than the whole screen. (Reject
         // large connected blobs that will be prohibitively slow to
-        // fit quads to.) A typical point along an edge is added three
-        // times (because it has 3 neighbors). The maximum perimeter
-        // is 2w+2h.
-        if (zarray_size(*cluster) > 3*(2*w+2*h)) {
+        // fit quads to.) A typical point along an edge is added two
+        // times (because it has 2 unique neighbors). The maximum
+        // perimeter is 2w+2h.
+        if (zarray_size(*cluster) > 2*(2*w+2*h)) {
             continue;
         }
 
@@ -1232,7 +1199,7 @@ void do_threshold_task(void *p)
         }
     }
 }
- 
+
 image_u8_t *threshold(apriltag_detector_t *td, image_u8_t *im)
 {
     int w = im->width, h = im->height, s = im->stride;
@@ -1532,12 +1499,12 @@ unionfind_t* connected_components(apriltag_detector_t *td, image_u8_t* threshim,
     unionfind_t *uf = unionfind_create(w * h);
 
     if (td->nthreads <= 1) {
-        do_unionfind_first_line(uf, threshim, h, w, ts);
+        do_unionfind_first_line(uf, threshim, w, ts);
         for (int y = 1; y < h; y++) {
-            do_unionfind_line2(uf, threshim, h, w, ts, y);
+            do_unionfind_line2(uf, threshim, w, ts, y);
         }
     } else {
-        do_unionfind_first_line(uf, threshim, h, w, ts);
+        do_unionfind_first_line(uf, threshim, w, ts);
 
         int sz = h;
         int chunksize = 1 + sz / (APRILTAG_TASKS_PER_THREAD_TARGET * td->nthreads);
@@ -1567,7 +1534,7 @@ unionfind_t* connected_components(apriltag_detector_t *td, image_u8_t* threshim,
 
         // XXX stitch together the different chunks.
         for (int i = 1; i < ntasks; i++) {
-            do_unionfind_line2(uf, threshim, h, w, ts, tasks[i].y0 - 1);
+            do_unionfind_line2(uf, threshim, w, ts, tasks[i].y0 - 1);
         }
 
         free(tasks);
@@ -1585,15 +1552,19 @@ zarray_t* do_gradient_clusters(image_u8_t* threshim, int ts, int y0, int y1, int
     mem_pools[mem_pool_idx] = calloc(mem_chunk_size, sizeof(struct uint64_zarray_entry));
 
     for (int y = y0; y < y1; y++) {
+        bool connected_last = false;
         for (int x = 1; x < w-1; x++) {
 
             uint8_t v0 = threshim->buf[y*ts + x];
-            if (v0 == 127)
+            if (v0 == 127) {
+                connected_last = false;
                 continue;
+            }
 
             // XXX don't query this until we know we need it?
             uint64_t rep0 = unionfind_get_representative(uf, y*w + x);
             if (unionfind_get_set_size(uf, rep0) < 25) {
+                connected_last = false;
                 continue;
             }
 
@@ -1617,6 +1588,7 @@ zarray_t* do_gradient_clusters(image_u8_t* threshim, int ts, int y0, int y1, int
             // A possible optimization would be to combine entries
             // within the same cluster.
 
+            bool connected;
 #define DO_CONN(dx, dy)                                                 \
             if (1) {                                                    \
                 uint8_t v1 = threshim->buf[(y + dy)*ts + x + dx];       \
@@ -1654,6 +1626,7 @@ zarray_t* do_gradient_clusters(image_u8_t* threshim, int ts, int y0, int y1, int
                                                                             \
                         struct pt p = { .x = 2*x + dx, .y = 2*y + dy, .gx = dx*((int) v1-v0), .gy = dy*((int) v1-v0)}; \
                         zarray_add(entry->cluster, &p);                     \
+                        connected = true;                                   \
                     }                                                   \
                 }                                                       \
             }
@@ -1663,8 +1636,16 @@ zarray_t* do_gradient_clusters(image_u8_t* threshim, int ts, int y0, int y1, int
             DO_CONN(0, 1);
 
             // do 8 connectivity
-            DO_CONN(-1, 1);
+            if (!connected_last) {
+                // Checking 1, 1 on the previous x, y, and -1, 1 on the current
+                // x, y result in duplicate points in the final list.  Only
+                // check the potential duplicate if adding this one won't
+                // create a duplicate.
+                DO_CONN(-1, 1);
+            }
+            connected = false;
             DO_CONN(1, 1);
+            connected_last = connected;
         }
     }
 #undef DO_CONN
@@ -1829,7 +1810,8 @@ zarray_t* fit_quads(apriltag_detector_t *td, int w, int h, zarray_t* clusters, i
         normal_border |= !family->reversed_border;
         reversed_border |= family->reversed_border;
     }
-    min_tag_width /= td->quad_decimate;
+    if (td->quad_decimate > 1)
+        min_tag_width /= td->quad_decimate;
     if (min_tag_width < 3) {
         min_tag_width = 3;
     }
@@ -1891,7 +1873,7 @@ zarray_t *apriltag_quad_thresh(apriltag_detector_t *td, image_u8_t *im)
             for (int x = 0; x < w; x++) {
                 uint32_t v = unionfind_get_representative(uf, y*w+x);
 
-                if (unionfind_get_set_size(uf, v) < td->qtp.min_cluster_pixels)
+                if ((int)unionfind_get_set_size(uf, v) < td->qtp.min_cluster_pixels)
                     continue;
 
                 uint32_t color = colors[v];

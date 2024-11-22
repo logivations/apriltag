@@ -32,6 +32,7 @@ either expressed or implied, of the Regents of The University of Michigan.
 
 #include "apriltag.h"
 
+#define _USE_MATH_DEFINES
 #include <math.h>
 #include <assert.h>
 #include <stdint.h>
@@ -52,10 +53,6 @@ either expressed or implied, of the Regents of The University of Michigan.
 #include "apriltag_math.h"
 
 #include "common/postscript_utils.h"
-
-#ifndef M_PI
-# define M_PI 3.141592653589793238462643383279502884196
-#endif
 
 #ifdef _WIN32
 static inline void srandom(unsigned int seed)
@@ -231,7 +228,7 @@ static void quick_decode_init(apriltag_family_t *family, int maxhamming)
 
     errno = 0;
 
-    for (int i = 0; i < family->ncodes; i++) {
+    for (uint32_t i = 0; i < family->ncodes; i++) {
         uint64_t code = family->codes[i];
 
         // add exact code (hamming = 0)
@@ -448,6 +445,10 @@ static matd_t* homography_compute2(double c[4][4]) {
             }
         }
 
+        if (max_val_idx < 0) {
+            return NULL;
+        }
+
         if (max_val < epsilon) {
             debug_print("WRN: Matrix is singular.\n");
             return NULL;
@@ -624,7 +625,7 @@ static float quad_decode(apriltag_detector_t* td, apriltag_family_t *family, ima
     graymodel_init(&whitemodel);
     graymodel_init(&blackmodel);
 
-    for (int pattern_idx = 0; pattern_idx < sizeof(patterns)/(5*sizeof(float)); pattern_idx ++) {
+    for (long unsigned int pattern_idx = 0; pattern_idx < sizeof(patterns)/(5*sizeof(float)); pattern_idx ++) {
         float *pattern = &patterns[pattern_idx * 5];
 
         int is_white = pattern[4];
@@ -685,7 +686,7 @@ static float quad_decode(apriltag_detector_t* td, apriltag_family_t *family, ima
     double *values = calloc(family->total_width*family->total_width, sizeof(double));
 
     int min_coord = (family->width_at_border - family->total_width)/2;
-    for (int i = 0; i < family->nbits; i++) {
+    for (uint32_t i = 0; i < family->nbits; i++) {
         int bity = family->bit_y[i];
         int bitx = family->bit_x[i];
 
@@ -718,7 +719,7 @@ static float quad_decode(apriltag_detector_t* td, apriltag_family_t *family, ima
     sharpen(td, values, family->total_width);
 
     uint64_t rcode = 0;
-    for (int i = 0; i < family->nbits; i++) {
+    for (uint32_t i = 0; i < family->nbits; i++) {
         int bity = family->bit_y[i];
         int bitx = family->bit_x[i];
         rcode = (rcode << 1);
@@ -788,10 +789,19 @@ static void refine_edges(apriltag_detector_t *td, image_u8_t *im_orig, struct qu
             // search on another pixel in the first place. Likewise,
             // for very small tags, we don't want the range to be too
             // big.
-            double range = td->quad_decimate + 1;
+
+            int range = td->quad_decimate + 1;
+
+            // To reduce the overhead of bilinear interpolation, we can
+            // reduce the number of steps per unit.
+            int steps_per_unit = 4;
+            double step_length = 1.0 / steps_per_unit;
+            int max_steps = 2 * steps_per_unit * range + 1;
+            double delta = 0.5;
 
             // XXX tunable step size.
-            for (double n = -range; n <= range; n +=  0.25) {
+            for (int step = 0; step < max_steps; ++step) {
+                double n = -range + step_length * step;
                 // Because of the guaranteed winding order of the
                 // points in the quad, we will start inside the white
                 // portion of the quad and work our way outward.
@@ -801,19 +811,36 @@ static void refine_edges(apriltag_detector_t *td, image_u8_t *im_orig, struct qu
                 // gradient more precisely, but are more sensitive to
                 // noise.
                 double grange = 1;
-                int x1 = x0 + (n + grange)*nx;
-                int y1 = y0 + (n + grange)*ny;
-                if (x1 < 0 || x1 >= im_orig->width || y1 < 0 || y1 >= im_orig->height)
+
+                double x1 = x0 + (n + grange)*nx - delta;
+                double y1 = y0 + (n + grange)*ny - delta;
+                double x1i_d, y1i_d, a1, b1;
+                a1 = modf(x1, &x1i_d);
+                b1 = modf(y1, &y1i_d);
+                int x1i = x1i_d, y1i = y1i_d;
+
+                if (x1i < 0 || x1i + 1 >= im_orig->width || y1i < 0 || y1i + 1 >= im_orig->height)
                     continue;
 
-                int x2 = x0 + (n - grange)*nx;
-                int y2 = y0 + (n - grange)*ny;
-                if (x2 < 0 || x2 >= im_orig->width || y2 < 0 || y2 >= im_orig->height)
+                double x2 = x0 + (n - grange)*nx - delta;
+                double y2 = y0 + (n - grange)*ny - delta;
+                double x2i_d, y2i_d, a2, b2;
+                a2 = modf(x2, &x2i_d);
+                b2 = modf(y2, &y2i_d);
+                int x2i = x2i_d, y2i = y2i_d;
+
+                if (x2i < 0 || x2i + 1 >= im_orig->width || y2i < 0 || y2i + 1 >= im_orig->height)
                     continue;
 
-                int g1 = im_orig->buf[y1*im_orig->stride + x1];
-                int g2 = im_orig->buf[y2*im_orig->stride + x2];
-
+                // interpolate
+                double g1 = (1 - a1) * (1 - b1) * im_orig->buf[y1i*im_orig->stride + x1i] +
+                                  a1 * (1 - b1) * im_orig->buf[y1i*im_orig->stride + x1i + 1] +
+                            (1 - a1) *    b1    * im_orig->buf[(y1i + 1)*im_orig->stride + x1i] +
+                                  a1 *    b1    * im_orig->buf[(y1i + 1)*im_orig->stride + x1i + 1];
+                double g2 = (1 - a2) * (1 - b2) * im_orig->buf[y2i*im_orig->stride + x2i] +
+                                  a2 * (1 - b2) * im_orig->buf[y2i*im_orig->stride + x2i + 1] +
+                            (1 - a2) *    b2    * im_orig->buf[(y2i + 1)*im_orig->stride + x2i] +
+                                  a2 *    b2    * im_orig->buf[(y2i + 1)*im_orig->stride + x2i + 1];
                 if (g1 < g2) // reject points whose gradient is "backwards". They can only hurt us.
                     continue;
 
@@ -1089,13 +1116,8 @@ zarray_t *apriltag_detector_detect(apriltag_detector_t *td, image_u8_t *im_orig)
             zarray_get_volatile(quads, i, &q);
 
             for (int j = 0; j < 4; j++) {
-                if (td->quad_decimate == 1.5) {
-                    q->p[j][0] *= td->quad_decimate;
-                    q->p[j][1] *= td->quad_decimate;
-                } else {
-                    q->p[j][0] = (q->p[j][0] - 0.5)*td->quad_decimate + 0.5;
-                    q->p[j][1] = (q->p[j][1] - 0.5)*td->quad_decimate + 0.5;
-                }
+                q->p[j][0] *= td->quad_decimate;
+                q->p[j][1] *= td->quad_decimate;
             }
         }
     }
@@ -1341,8 +1363,7 @@ zarray_t *apriltag_detector_detect(apriltag_detector_t *td, image_u8_t *im_orig)
                 int k = (j + 1) & 3;
                 image_u8x3_draw_line(out,
                                      det->p[j][0], det->p[j][1], det->p[k][0], det->p[k][1],
-                                     (uint8_t[]) { rgb[0], rgb[1], rgb[2] },
-                                     1);
+                                     (uint8_t[]) { rgb[0], rgb[1], rgb[2] });
             }
         }
 
@@ -1424,10 +1445,10 @@ void apriltag_detections_destroy(zarray_t *detections)
     zarray_destroy(detections);
 }
 
-image_u8_t *apriltag_to_image(apriltag_family_t *fam, int idx)
+image_u8_t *apriltag_to_image(apriltag_family_t *fam, uint32_t idx)
 {
     assert(fam != NULL);
-    assert(idx >= 0 && idx < fam->ncodes);
+    assert(idx < fam->ncodes);
 
     uint64_t code = fam->codes[idx];
 
@@ -1444,7 +1465,7 @@ image_u8_t *apriltag_to_image(apriltag_family_t *fam, int idx)
     }
 
     int border_start = (fam->total_width - fam->width_at_border)/2;
-    for (int i = 0; i < fam->nbits; i++) {
+    for (uint32_t i = 0; i < fam->nbits; i++) {
         if (code & (APRILTAG_U64_ONE << (fam->nbits - i - 1))) {
             im->buf[(fam->bit_y[i] + border_start)*im->stride + fam->bit_x[i] + border_start] = 255;
         }

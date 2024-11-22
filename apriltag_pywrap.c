@@ -80,6 +80,8 @@ typedef struct {
 static PyObject *
 apriltag_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
+    errno = 0;
+
     bool success = false;
 
     apriltag_py_t* self = (apriltag_py_t*)type->tp_alloc(type, 0);
@@ -91,7 +93,7 @@ apriltag_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     const char* family          = NULL;
     int         Nthreads        = 1;
     int         maxhamming      = 1;
-    float       decimate        = 1.0;
+    float       decimate        = 2.0;
     float       blur            = 0.0;
     bool        refine_edges    = true;
     bool        debug           = false;
@@ -205,13 +207,17 @@ static void apriltag_dealloc(apriltag_py_t* self)
 static PyObject* apriltag_detect(apriltag_py_t* self,
                                  PyObject* args)
 {
+    errno = 0;
+
     PyObject*      result           = NULL;
     PyArrayObject* xy_c             = NULL;
     PyArrayObject* xy_lb_rb_rt_lt   = NULL;
     PyArrayObject* image            = NULL;
     PyObject*      detections_tuple = NULL;
 
+#ifdef _POSIX_C_SOURCE
     SET_SIGINT();
+#endif
     if(!PyArg_ParseTuple( args, "O&",
                           PyArray_Converter, &image ))
         goto done;
@@ -256,7 +262,7 @@ static PyObject* apriltag_detect(apriltag_py_t* self,
         PyErr_Format(PyExc_RuntimeError, "Error creating output tuple of size %d", N);
         goto done;
     }
-    
+
     for (int i=0; i < N; i++)
     {
         xy_c = (PyArrayObject*)PyArray_SimpleNew(1, ((npy_intp[]){2}), NPY_FLOAT64);
@@ -305,21 +311,19 @@ static PyObject* apriltag_detect(apriltag_py_t* self,
     Py_XDECREF(image);
     Py_XDECREF(detections_tuple);
 
+#ifdef _POSIX_C_SOURCE
     RESET_SIGINT();
+#endif
     return result;
 }
 
 
-static const char apriltag_detect_docstring[] =
-#include "apriltag_detect.docstring.h"
-    ;
-static const char apriltag_type_docstring[] =
-#include "apriltag_py_type.docstring.h"
-    ;
+#include "apriltag_detect_docstring.h"
+#include "apriltag_py_type_docstring.h"
 
 static PyMethodDef apriltag_methods[] =
     { PYMETHODDEF_ENTRY(apriltag_, detect, METH_VARARGS),
-      {}
+      {NULL, NULL, 0, NULL}
     };
 
 static PyTypeObject apriltagType =
@@ -331,11 +335,11 @@ static PyTypeObject apriltagType =
     .tp_dealloc   = (destructor)apriltag_dealloc,
     .tp_methods   = apriltag_methods,
     .tp_flags     = Py_TPFLAGS_DEFAULT,
-    .tp_doc       = apriltag_type_docstring
+    .tp_doc       = apriltag_py_type_docstring
 };
 
 static PyMethodDef methods[] =
-    { {}
+    { {NULL, NULL, 0, NULL}
     };
 
 
@@ -363,7 +367,11 @@ static struct PyModuleDef module_def =
      "apriltag",
      "AprilTags visual fiducial system detector",
      -1,
-     methods
+     methods,
+    0,
+    0,
+    0,
+    0
     };
 
 PyMODINIT_FUNC PyInit_apriltag(void)
@@ -383,4 +391,3 @@ PyMODINIT_FUNC PyInit_apriltag(void)
 }
 
 #endif
-
